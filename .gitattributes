@@ -1,0 +1,3 @@
+# Ship the plugin payload byte-for-byte (it is embedded into the executable).
+src-tauri/payload/** -text
+*.ico -text

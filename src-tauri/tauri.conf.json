@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OctoWoW Manager",
+  "version": "3.0.0",
+  "identifier": "com.octowow.manager",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OctoWoW Manager",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 620,
+        "backgroundColor": "#09090B",
+        "dragDropEnabled": true,
+        "decorations": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "appimage",
+      "app"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "publisher": "zmarotrix",
+    "copyright": "Copyright © 2026 zmarotrix. GPL-3.0.",
+    "category": "Game",
+    "shortDescription": "OctoWoW Manager",
+    "longDescription": "Client tweaks, plugins, MPQ patches, addons and updates for the OctoWoW 1.12.1 client.",
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}

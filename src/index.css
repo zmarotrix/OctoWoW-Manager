@@ -1,0 +1,154 @@
+@import 'tailwindcss';
+
+@theme {
+	/* Surfaces: near-black neutral with translucent white layers */
+	--color-bg: #09090b;
+	--color-sidebar: #0c0c0f;
+	--color-panel: rgb(255 255 255 / 0.025);
+	--color-panel-hover: rgb(255 255 255 / 0.045);
+	--color-raised: #17171b;
+	--color-line: rgb(255 255 255 / 0.07);
+	--color-line-strong: rgb(255 255 255 / 0.12);
+
+	/* Text */
+	--color-fg: #fafafa;
+	--color-muted: #a1a1aa;
+	--color-subtle: #71717a;
+
+	/* Brand: violet → indigo, from the logo */
+	--color-accent: #8b5cf6;
+	--color-accent-2: #6366f1;
+	--color-accent-soft: rgb(139 92 246 / 0.14);
+
+	--color-success: #22c55e;
+	--color-warning: #f59e0b;
+	--color-danger: #f43f5e;
+	--color-info: #38bdf8;
+
+	--font-sans: 'Inter Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+	--font-mono: 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--color-bg);
+	color: var(--color-fg);
+	font-family: var(--font-sans);
+	font-size: 13px;
+	font-feature-settings: 'cv11', 'ss01';
+	user-select: none;
+	-webkit-font-smoothing: antialiased;
+	overflow: hidden;
+}
+
+input,
+textarea {
+	user-select: text;
+}
+
+button {
+	cursor: default;
+}
+
+:focus-visible {
+	outline: 2px solid rgb(139 92 246 / 0.6);
+	outline-offset: 2px;
+}
+
+/* Soft brand glow behind the content area */
+.glow {
+	background:
+		radial-gradient(900px 420px at 15% -8%, rgb(139 92 246 / 0.13), transparent 65%),
+		radial-gradient(700px 380px at 105% 0%, rgb(99 102 241 / 0.07), transparent 60%);
+}
+
+.brand-gradient {
+	background-image: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+}
+
+/* Long lists: let the browser skip layout/paint for off-screen rows. */
+.lazy-row {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 64px;
+}
+
+/* Range slider: thin filled track + white thumb. --pct is set inline. */
+.slider {
+	appearance: none;
+	height: 20px;
+	background: transparent;
+}
+.slider::-webkit-slider-runnable-track {
+	height: 4px;
+	border-radius: 9999px;
+	background: linear-gradient(
+		to right,
+		var(--color-accent) 0,
+		var(--color-accent-2) var(--pct),
+		rgb(255 255 255 / 0.08) var(--pct)
+	);
+}
+.slider::-webkit-slider-thumb {
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin-top: -5px;
+	border-radius: 9999px;
+	background: #fff;
+	box-shadow:
+		0 0 0 4px rgb(139 92 246 / 0.25),
+		0 1px 3px rgb(0 0 0 / 0.5);
+	transition: box-shadow 120ms;
+}
+.slider:hover::-webkit-slider-thumb,
+.slider:active::-webkit-slider-thumb {
+	box-shadow:
+		0 0 0 6px rgb(139 92 246 / 0.3),
+		0 1px 3px rgb(0 0 0 / 0.5);
+}
+.slider.danger::-webkit-slider-runnable-track {
+	background: linear-gradient(to right, #f97316 0, var(--color-danger) var(--pct), rgb(255 255 255 / 0.08) var(--pct));
+}
+
+input[type='number']::-webkit-inner-spin-button {
+	appearance: none;
+}
+
+::-webkit-scrollbar {
+	width: 12px;
+}
+::-webkit-scrollbar-thumb {
+	background: rgb(255 255 255 / 0.08);
+	border-radius: 9999px;
+	border: 4px solid transparent;
+	background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background-color: rgb(255 255 255 / 0.16);
+}
+
+@keyframes enter {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.98);
+	}
+}
+.animate-enter {
+	animation: enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes page {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+.animate-page {
+	animation: page 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
