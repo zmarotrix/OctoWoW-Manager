@@ -1,7 +1,9 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
 import { invoke } from '@tauri-apps/api/core';
 
-export type GpuType = 'Standard' | 'AMD';
+export type GpuType = 'Standard' | 'AMD' | 'Legacy' | 'Off';
+
+export type VulkanStatus = { checked: boolean; device: { name: string; vendorId: number; major: number; minor: number } | null };
 export type PluginSource = 'Recommended' | 'Latest';
 
 export type Tweaks = {
@@ -153,6 +155,7 @@ export const api = {
 	addonRemove: (folder: string) => invoke<void>('addon_remove', { folder }),
 	addonCatalog: (refresh = false) => invoke<CatalogEntry[]>('addon_catalog', { refresh }),
 	checkAppUpdate: () => invoke<AppUpdate>('check_app_update'),
+	gpuInfo: () => invoke<VulkanStatus>('gpu_info'),
 	importLegacyConfig: (path: string) => invoke<{ settings: Settings; summary: string }>('import_legacy_config', { path }),
 	clientStatus: () => invoke<ClientPlan | null>('client_status'),
 	clientCheck: () => invoke<JobId>('client_check'),

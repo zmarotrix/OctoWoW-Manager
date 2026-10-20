@@ -9,7 +9,7 @@
 
 use super::plugins;
 use super::patcher::{self, Tweaks};
-use super::platform::{self, DepPolicy};
+use super::platform::{self, DepPolicy, VulkanStatus};
 use super::util::{copy_dir, get_bytes, read_from_targz, remove_dir_force};
 use crate::config::{GpuType, PluginSource, Settings};
 use std::collections::HashSet;
@@ -24,6 +24,9 @@ pub struct ApplyInput<'a> {
     /// App icon for the shortcut.
     pub icon: Option<PathBuf>,
     pub settings: &'a Settings,
+    /// The client release's own d3d9.dll (DXVK "Standard"), if it could be fetched.
+    pub client_dxvk: Option<PathBuf>,
+    pub vulkan: VulkanStatus,
 }
 
 pub type Log<'a> = &'a (dyn Fn(&'static str, String) + Sync);
@@ -66,6 +69,7 @@ fn user_managed(dir: &Path) -> bool {
 
 pub async fn apply(input: ApplyInput<'_>, log: Log<'_>, step: &(dyn Fn(u64, &str) + Sync)) -> Result<Vec<String>, String> {
     let ApplyInput { wow_dir, payload, cache, settings: s, .. } = input;
+    let client_dxvk = input.client_dxvk.clone();
     let mut warnings = Vec::new();
     if !wow_dir.join("WoW.exe").is_file() {
         return Err("WoW.exe wasn't found in your game folder.".into());
@@ -126,21 +130,35 @@ pub async fn apply(input: ApplyInput<'_>, log: Log<'_>, step: &(dyn Fn(u64, &str
 
     // 3. DXVK.
     step(3, "Setting up DXVK");
-    match dxvk_d3d9(payload, cache, s.gpu_type).await {
-        Ok((bytes, label)) => {
-            std::fs::write(wow_dir.join("d3d9.dll"), bytes).map_err(|e| format!("Couldn't write d3d9.dll (is the game running?): {e}"))?;
-            log("info", format!("Installed {label}"));
+    let (dxvk, why) = effective_dxvk(s.gpu_type, &input.vulkan);
+    if let Some(w) = why {
+        log("warn", w.clone());
+        warnings.push(w);
+    }
+    if dxvk == GpuType::Off {
+        if park_d3d9(wow_dir)? {
+            log("info", "DXVK off: parked d3d9.dll as d3d9.dll.off; the game uses DirectX 9".into());
         }
-        Err(e) => {
-            let w = format!("DXVK not updated: {e}");
-            log("warn", w.clone());
-            warnings.push(w);
+    } else {
+        match dxvk_d3d9(payload, cache, dxvk, client_dxvk.as_deref()).await {
+            Ok((bytes, label)) => {
+                std::fs::write(wow_dir.join("d3d9.dll"), bytes).map_err(|e| format!("Couldn't write d3d9.dll (is the game running?): {e}"))?;
+                let _ = std::fs::remove_file(wow_dir.join("d3d9.dll.off"));
+                log("info", format!("Installed {label}"));
+            }
+            Err(e) => {
+                // Bring back a parked copy rather than leaving DXVK half-configured.
+                let restored = !wow_dir.join("d3d9.dll").exists() && std::fs::rename(wow_dir.join("d3d9.dll.off"), wow_dir.join("d3d9.dll")).is_ok();
+                let w = format!("DXVK not updated: {e}{}", if restored { " (restored your previous d3d9.dll)" } else { "" });
+                log("warn", w.clone());
+                warnings.push(w);
+            }
         }
     }
 
     // 4. Plugins + dlls.txt.
     step(4, "Installing plugins");
-    let mut lines = vec!["dxvk".to_string()];
+    let mut lines = if dxvk == GpuType::Off { Vec::new() } else { vec!["dxvk".to_string()] };
     for p in catalog.iter().filter(|p| plugin_enabled(s, p)) {
         let dest = wow_dir.join(p.file);
         let latest = p.github.filter(|_| s.plugin_sources.get(p.file) == Some(&PluginSource::Latest));
@@ -218,18 +236,58 @@ fn write_dlls_txt(wow_dir: &Path, ours: Vec<String>, catalog: &[plugins::PluginI
 
 // ---------- DXVK ----------
 
-const DXVK_STANDARD: &str = "2.6.2";
 const DXVK_AMD: &str = "2.5.3";
+const DXVK_LEGACY: &str = "1.10.3";
 
-/// d3d9.dll for the chosen GPU: bundled payload first, else the official DXVK
-/// release (downloaded once and cached).
-async fn dxvk_d3d9(payload: &Path, cache: &Path, gpu: GpuType) -> Result<(Vec<u8>, String), String> {
-    let (folder, version) = match gpu {
+/// Steps the chosen DXVK mode down to one this machine can run. DXVK 2.x needs
+/// Vulkan 1.3, 1.10.x needs 1.1; without Vulkan the game must use DirectX 9.
+/// Returns the mode to install and, if it changed, why.
+pub fn effective_dxvk(chosen: GpuType, vk: &VulkanStatus) -> (GpuType, Option<String>) {
+    if !vk.checked || chosen == GpuType::Off {
+        return (chosen, None);
+    }
+    let Some(d) = &vk.device else {
+        return (GpuType::Off, Some("No Vulkan-capable graphics driver was found, so DXVK was turned off and the game will use DirectX 9. Update your graphics driver to use DXVK.".into()));
+    };
+    let v = (d.major, d.minor);
+    if v < (1, 1) {
+        return (GpuType::Off, Some(format!("{} only supports Vulkan {}.{}, which is too old for DXVK; the game will use DirectX 9.", d.name, d.major, d.minor)));
+    }
+    if v < (1, 3) && matches!(chosen, GpuType::Standard | GpuType::Amd) {
+        return (GpuType::Legacy, Some(format!("{} supports Vulkan {}.{}; DXVK 2.x needs 1.3, so the older-GPU build (DXVK {DXVK_LEGACY}) was installed instead.", d.name, d.major, d.minor)));
+    }
+    (chosen, None)
+}
+
+/// Moves d3d9.dll aside as d3d9.dll.off (the same name the OctoLauncher uses).
+/// Returns whether anything was parked.
+fn park_d3d9(wow_dir: &Path) -> Result<bool, String> {
+    let (live, off) = (wow_dir.join("d3d9.dll"), wow_dir.join("d3d9.dll.off"));
+    if !live.is_file() {
+        return Ok(false);
+    }
+    let _ = std::fs::remove_file(&off);
+    std::fs::rename(&live, &off).map_err(|e| format!("Couldn't turn DXVK off (is the game running?): {e}"))?;
+    Ok(true)
+}
+
+/// d3d9.dll for the chosen mode: a bundled payload copy (v2.6 layout) first; for
+/// Standard the client release's own build; otherwise the official DXVK release
+/// (downloaded once and cached).
+async fn dxvk_d3d9(payload: &Path, cache: &Path, mode: GpuType, client_dxvk: Option<&Path>) -> Result<(Vec<u8>, String), String> {
+    let (folder, version) = match mode {
         GpuType::Amd => ("DXVK_AMD", DXVK_AMD),
-        GpuType::Standard => ("DXVK_Standard", DXVK_STANDARD),
+        GpuType::Legacy => ("DXVK_Legacy", DXVK_LEGACY),
+        GpuType::Standard => ("DXVK_Standard", ""),
+        GpuType::Off => return Err("DXVK is off".into()),
     };
     if let Ok(b) = std::fs::read(payload.join(folder).join("d3d9.dll")) {
         return Ok((b, format!("bundled {folder} d3d9.dll")));
+    }
+    if mode == GpuType::Standard {
+        let path = client_dxvk.ok_or("couldn't download the client's DXVK build")?;
+        let b = std::fs::read(path).map_err(|e| e.to_string())?;
+        return Ok((b, "the client's own DXVK build".into()));
     }
     let cached = cache.join("dxvk").join(version).join("d3d9.dll");
     if let Ok(b) = std::fs::read(&cached) {
@@ -337,13 +395,14 @@ mod tests {
         let payload = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("payload");
         let mut s = Settings { wow_dir: wow.to_string_lossy().into(), ..Settings::default() };
         s.tweaks.fov = 2.1235;
+        s.gpu_type = GpuType::Amd; // a downloadable DXVK build (Standard needs the release's copy)
         s.tweaks.disable_dep = true; // only clears the exe's NX-compat flag
         s.plugin_sources.insert("ClassicAPI.dll".into(), PluginSource::Latest);
         s.custom_plugins.insert("MyHook.dll".into(), true);
         let run = |s: Settings| {
             let (wow, payload, cache) = (wow.clone(), payload.clone(), base.join("appdata"));
             async move {
-                apply(ApplyInput { wow_dir: &wow, payload: &payload, cache: &cache, icon: None, settings: &s }, &|l, m| println!("[{l}] {m}"), &|n, m| println!("step {n}: {m}")).await
+                apply(ApplyInput { wow_dir: &wow, payload: &payload, cache: &cache, icon: None, settings: &s, client_dxvk: None, vulkan: VulkanStatus::default() }, &|l, m| println!("[{l}] {m}"), &|n, m| println!("step {n}: {m}")).await
             }
         };
         let warnings = run(s.clone()).await.unwrap();
@@ -378,6 +437,30 @@ SomeoneElses.dll"), "custom + unmanaged lines kept");
         assert!(!wow.join("Data/Interface/GlueXML/AutoLogin.lua").exists());
 
         remove_dir_force(&base).unwrap();
+    }
+
+    #[test]
+    fn dxvk_steps_down_for_weak_or_missing_vulkan() {
+        use crate::core::platform::VulkanDevice;
+        let gpu = |major, minor| VulkanStatus { checked: true, device: Some(VulkanDevice { name: "GPU".into(), vendor_id: 0x10de, major, minor }) };
+        assert_eq!(effective_dxvk(GpuType::Standard, &gpu(1, 3)).0, GpuType::Standard);
+        assert_eq!(effective_dxvk(GpuType::Amd, &gpu(1, 2)).0, GpuType::Legacy);
+        assert_eq!(effective_dxvk(GpuType::Legacy, &gpu(1, 1)), (GpuType::Legacy, None));
+        assert_eq!(effective_dxvk(GpuType::Standard, &gpu(1, 0)).0, GpuType::Off);
+        assert_eq!(effective_dxvk(GpuType::Standard, &VulkanStatus { checked: true, device: None }).0, GpuType::Off);
+        assert_eq!(effective_dxvk(GpuType::Standard, &VulkanStatus::default()), (GpuType::Standard, None), "unchecked (macOS) keeps the choice");
+        assert_eq!(effective_dxvk(GpuType::Off, &gpu(1, 3)).0, GpuType::Off);
+    }
+
+    #[test]
+    fn park_moves_d3d9_aside() {
+        let dir = std::env::temp_dir().join(format!("octo-park-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("d3d9.dll"), b"dxvk").unwrap();
+        assert!(park_d3d9(&dir).unwrap());
+        assert!(!dir.join("d3d9.dll").exists() && dir.join("d3d9.dll.off").is_file());
+        assert!(!park_d3d9(&dir).unwrap(), "nothing left to park");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

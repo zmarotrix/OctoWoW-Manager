@@ -204,6 +204,8 @@ mockIPC(
 				return CATALOG;
 			case 'check_addon_updates':
 				return fakeJob('Checking addons for updates', ['Asking repositories for their latest commit']);
+			case 'gpu_info':
+				return { checked: true, device: { name: 'NVIDIA GeForce GTX 750 Ti', vendorId: 0x10de, major: 1, minor: 2 } };
 			case 'check_app_update':
 				return { current: '3.0.0', latest: 'v3.1.0', url: 'https://github.com/zmarotrix/OctoWoW-Manager/releases', newer: true };
 			case 'launch_game':

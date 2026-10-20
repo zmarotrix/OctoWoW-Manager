@@ -272,6 +272,21 @@ impl Updater {
         Ok((bytes, last_modified))
     }
 
+    /// One file from the current release, downloaded (piece-verified) into
+    /// `<cache>/client-files/<release>/` once and reused after that.
+    pub async fn client_file(&self, path: &str, cache: &Path) -> Result<PathBuf, String> {
+        let (bytes, _) = self.fetch_release().await?;
+        let t = Torrent::parse(&bytes)?;
+        let idx = t.files.iter().position(|f| f.path.eq_ignore_ascii_case(path)).ok_or_else(|| format!("{path} isn't part of the client release"))?;
+        let dir = cache.join("client-files").join(&t.info_hash[..12]);
+        let out = t.local_path(&dir, idx);
+        if std::fs::metadata(&out).map(|m| m.len()).ok() == Some(t.files[idx].length) {
+            return Ok(out);
+        }
+        super::webseed::download(&t, &dir, &[idx], HashSet::new(), Arc::new(AtomicBool::new(false)), &|_| {}, &|_| {}).await?;
+        Ok(out)
+    }
+
     fn baseline_paths(&self) -> (PathBuf, PathBuf) {
         (self.dir.join("baseline.json"), self.dir.join("baseline.torrent"))
     }
@@ -654,6 +669,21 @@ mod tests {
         assert!(verify_pieces(&t, &root, &interior, &|_, _| {}, &AtomicBool::new(false)).is_empty(), "downloaded data matches the torrent");
         println!("verified {} pieces", interior.len());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The client's own DXVK d3d9.dll, fetched piece-verified and then reused from cache.
+    #[tokio::test]
+    #[ignore]
+    async fn live_client_file() {
+        let up = Updater::new(temp_dir("cf-data"));
+        let cache = temp_dir("cf-cache");
+        let p = up.client_file("d3d9.dll", &cache).await.unwrap();
+        let bytes = std::fs::read(&p).unwrap();
+        assert_eq!(bytes.len(), 4_501_518);
+        assert!(bytes.windows(17).any(|w| w == b"v2.7.1-1-gplasync"), "it's the client's gplasync build");
+        let t0 = std::time::Instant::now();
+        assert_eq!(up.client_file("d3d9.dll", &cache).await.unwrap(), p);
+        println!("cached lookup took {:?}", t0.elapsed());
     }
 
     #[test]

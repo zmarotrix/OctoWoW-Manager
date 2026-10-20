@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CircleAlert, CircleCheck, FileInput, FolderOpen, Gauge, Monitor, Terminal } from 'lucide-react';
-import { api, errorText, type Tweaks } from '../lib/ipc';
+import { api, errorText, type GpuType, type Tweaks } from '../lib/ipc';
 import { toast } from '../lib/toast';
 import { confirm } from '../lib/dialog';
 import { useSettings } from '../lib/settings';
-import { Badge, Button, Input, PageHeader, Panel, Row, Segmented, Select, Slider, Switch } from '../components/ui';
+import { Badge, Button, cn, Input, PageHeader, Panel, Row, Segmented, Select, Slider, Switch } from '../components/ui';
 
 const screenW = Math.round(window.screen.width * window.devicePixelRatio);
 const screenH = Math.round(window.screen.height * window.devicePixelRatio);
@@ -73,6 +73,22 @@ const Toggle = ({ label, tip, checked, onChange }: { label: string; tip: string;
 		<span className={checked ? 'text-fg' : 'text-muted'}>{label}</span>
 	</label>
 );
+
+/** What DXVK can do on this PC, from the core's Vulkan probe. */
+const GpuHint = ({ choice }: { choice: GpuType }) => {
+	const info = useQuery({ queryKey: ['gpuInfo'], queryFn: api.gpuInfo, staleTime: Infinity });
+	const v = info.data;
+	if (!v?.checked) return null;
+	const d = v.device;
+	const [tone, text] = !d
+		? ['text-amber-400', "No Vulkan graphics driver found. DXVK can't run here, so Apply uses DirectX 9 (Off). Updating your graphics driver may enable DXVK."]
+		: d.major === 1 && d.minor < 1
+			? ['text-amber-400', `${d.name} supports Vulkan ${d.major}.${d.minor}, which is too old for DXVK. Apply uses DirectX 9 (Off).`]
+			: d.major === 1 && d.minor < 3
+				? ['text-amber-400', `${d.name} supports Vulkan ${d.major}.${d.minor}. DXVK 2.x needs 1.3, so choose Older GPUs (Apply switches to it automatically).`]
+				: ['text-subtle', `${d.name} · Vulkan ${d.major}.${d.minor}: every DXVK option works.${d.vendorId === 0x1002 && choice === 'Standard' ? ' AMD GPU detected: try AMD Specific DXVK if you get crashes.' : ''}`];
+	return <p className={cn('mt-2 text-xs', tone)}>{text}</p>;
+};
 
 const InstallPanel = () => {
 	const { settings, update } = useSettings();
@@ -171,10 +187,13 @@ export const GameSettingsPage = () => {
 						value={settings.gpuType}
 						options={[
 							{ value: 'Standard', label: 'Standard DXVK (NVIDIA/Intel)' },
-							{ value: 'AMD', label: 'AMD Specific DXVK' }
+							{ value: 'AMD', label: 'AMD Specific DXVK' },
+							{ value: 'Legacy', label: 'Older GPUs (DXVK 1.10)' },
+							{ value: 'Off', label: 'Off (DirectX 9)' }
 						]}
 						onChange={g => stage(s => ({ ...s, gpuType: g }))}
 					/>
+					<GpuHint choice={settings.gpuType} />
 					<div className="mt-4 grid grid-cols-2 gap-x-10 gap-y-1">
 						<Toggle
 							label="Auto Login Mod"

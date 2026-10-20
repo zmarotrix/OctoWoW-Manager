@@ -57,6 +57,7 @@ pub fn run() {
             commands::apply_changes,
             commands::launch_game,
             commands::check_app_update,
+            commands::gpu_info,
             commands::import_legacy_config,
         ])
         .run(tauri::generate_context!())

@@ -3,7 +3,7 @@ use crate::core::updater::Updater;
 use crate::core::addons::CatalogEntry;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
 pub struct AppState {
@@ -13,6 +13,7 @@ pub struct AppState {
     /// Addon repo url key -> latest remote commit, from the last update check.
     pub addon_remote: Mutex<HashMap<String, String>>,
     pub catalog: Mutex<Option<Vec<CatalogEntry>>>,
+    pub vulkan: OnceLock<crate::core::platform::VulkanStatus>,
 }
 
 impl AppState {
@@ -24,6 +25,7 @@ impl AppState {
             updater: Updater::new(app.path().app_data_dir()?),
             addon_remote: Mutex::new(HashMap::new()),
             catalog: Mutex::new(None),
+            vulkan: OnceLock::new(),
         })
     }
 
