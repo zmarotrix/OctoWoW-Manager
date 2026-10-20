@@ -26,7 +26,7 @@ Coming from v2.6? Use **Game Settings → Import v2.6 settings** and pick your o
   range, camera zoom, audio channels, auto-loot, background sound, Large Address Aware,
   camera-skip fix, corrupt-interface bypass and DEP. Written into `WoW_Tweaked.exe` by a
   built-in port of vanilla-tweaks; your `WoW.exe` is never modified.
-- **Client Tweaks:** VanillaFixes, DXVK (the client's own build, AMD, older-GPU build, or off), SuperWoW, nampower, UnitXP_SP3,
+- **Client Tweaks:** VanillaFixes, DXVK (Standard 2.6.1, AMD 2.5.3, older-GPU 1.10.3, or off), SuperWoW, nampower, UnitXP_SP3,
   ClassicAPI, VanillaHelpers and the WeirdUtils suite, with "Latest (GitHub)" sources, plus
   your own custom DLLs. `dlls.txt` is managed safely: unknown lines are always kept.
 - **Game Mods:** toggle, describe and remove custom `.mpq` patches without deleting them.

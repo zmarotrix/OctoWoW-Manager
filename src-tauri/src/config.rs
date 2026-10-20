@@ -7,10 +7,10 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum GpuType {
-    /// The DXVK build that ships with the OctoWoW client (dxvk-gplasync 2.7.1).
+    /// DXVK 2.6.1 (bundled in the payload).
     #[default]
     Standard,
-    /// DXVK 2.5.3, an older stable release that avoids AMD-specific crashes.
+    /// DXVK 2.5.3 (bundled), an older stable release that avoids AMD-specific crashes.
     #[serde(rename = "AMD")]
     Amd,
     /// DXVK 1.10.3 for GPUs/drivers without Vulkan 1.3.

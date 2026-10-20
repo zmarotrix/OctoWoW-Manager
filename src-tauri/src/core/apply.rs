@@ -24,8 +24,6 @@ pub struct ApplyInput<'a> {
     /// App icon for the shortcut.
     pub icon: Option<PathBuf>,
     pub settings: &'a Settings,
-    /// The client release's own d3d9.dll (DXVK "Standard"), if it could be fetched.
-    pub client_dxvk: Option<PathBuf>,
     pub vulkan: VulkanStatus,
 }
 
@@ -69,7 +67,6 @@ fn user_managed(dir: &Path) -> bool {
 
 pub async fn apply(input: ApplyInput<'_>, log: Log<'_>, step: &(dyn Fn(u64, &str) + Sync)) -> Result<Vec<String>, String> {
     let ApplyInput { wow_dir, payload, cache, settings: s, .. } = input;
-    let client_dxvk = input.client_dxvk.clone();
     let mut warnings = Vec::new();
     if !wow_dir.join("WoW.exe").is_file() {
         return Err("WoW.exe wasn't found in your game folder.".into());
@@ -140,7 +137,7 @@ pub async fn apply(input: ApplyInput<'_>, log: Log<'_>, step: &(dyn Fn(u64, &str
             log("info", "DXVK off: parked d3d9.dll as d3d9.dll.off; the game uses DirectX 9".into());
         }
     } else {
-        match dxvk_d3d9(payload, cache, dxvk, client_dxvk.as_deref()).await {
+        match dxvk_d3d9(payload, cache, dxvk).await {
             Ok((bytes, label)) => {
                 std::fs::write(wow_dir.join("d3d9.dll"), bytes).map_err(|e| format!("Couldn't write d3d9.dll (is the game running?): {e}"))?;
                 let _ = std::fs::remove_file(wow_dir.join("d3d9.dll.off"));
@@ -236,6 +233,9 @@ fn write_dlls_txt(wow_dir: &Path, ours: Vec<String>, catalog: &[plugins::PluginI
 
 // ---------- DXVK ----------
 
+// Standard (2.6.1) and AMD (2.5.3) ship in the payload; these versions are the
+// download fallback when a payload copy is missing.
+const DXVK_STANDARD: &str = "2.6.1";
 const DXVK_AMD: &str = "2.5.3";
 const DXVK_LEGACY: &str = "1.10.3";
 
@@ -271,23 +271,17 @@ fn park_d3d9(wow_dir: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-/// d3d9.dll for the chosen mode: a bundled payload copy (v2.6 layout) first; for
-/// Standard the client release's own build; otherwise the official DXVK release
-/// (downloaded once and cached).
-async fn dxvk_d3d9(payload: &Path, cache: &Path, mode: GpuType, client_dxvk: Option<&Path>) -> Result<(Vec<u8>, String), String> {
+/// d3d9.dll for the chosen mode: the bundled payload copy (v2.6 layout) first,
+/// else the official DXVK release (downloaded once and cached).
+async fn dxvk_d3d9(payload: &Path, cache: &Path, mode: GpuType) -> Result<(Vec<u8>, String), String> {
     let (folder, version) = match mode {
+        GpuType::Standard => ("DXVK_Standard", DXVK_STANDARD),
         GpuType::Amd => ("DXVK_AMD", DXVK_AMD),
         GpuType::Legacy => ("DXVK_Legacy", DXVK_LEGACY),
-        GpuType::Standard => ("DXVK_Standard", ""),
         GpuType::Off => return Err("DXVK is off".into()),
     };
     if let Ok(b) = std::fs::read(payload.join(folder).join("d3d9.dll")) {
-        return Ok((b, format!("bundled {folder} d3d9.dll")));
-    }
-    if mode == GpuType::Standard {
-        let path = client_dxvk.ok_or("couldn't download the client's DXVK build")?;
-        let b = std::fs::read(path).map_err(|e| e.to_string())?;
-        return Ok((b, "the client's own DXVK build".into()));
+        return Ok((b, format!("DXVK {version} (bundled)")));
     }
     let cached = cache.join("dxvk").join(version).join("d3d9.dll");
     if let Ok(b) = std::fs::read(&cached) {
@@ -395,14 +389,13 @@ mod tests {
         let payload = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("payload");
         let mut s = Settings { wow_dir: wow.to_string_lossy().into(), ..Settings::default() };
         s.tweaks.fov = 2.1235;
-        s.gpu_type = GpuType::Amd; // a downloadable DXVK build (Standard needs the release's copy)
         s.tweaks.disable_dep = true; // only clears the exe's NX-compat flag
         s.plugin_sources.insert("ClassicAPI.dll".into(), PluginSource::Latest);
         s.custom_plugins.insert("MyHook.dll".into(), true);
         let run = |s: Settings| {
             let (wow, payload, cache) = (wow.clone(), payload.clone(), base.join("appdata"));
             async move {
-                apply(ApplyInput { wow_dir: &wow, payload: &payload, cache: &cache, icon: None, settings: &s, client_dxvk: None, vulkan: VulkanStatus::default() }, &|l, m| println!("[{l}] {m}"), &|n, m| println!("step {n}: {m}")).await
+                apply(ApplyInput { wow_dir: &wow, payload: &payload, cache: &cache, icon: None, settings: &s, vulkan: VulkanStatus::default() }, &|l, m| println!("[{l}] {m}"), &|n, m| println!("step {n}: {m}")).await
             }
         };
         let warnings = run(s.clone()).await.unwrap();

@@ -74,6 +74,11 @@ mod tests {
         let u = super::unpack(&data).unwrap();
         assert!(u.payload.join("VanillaFixes.exe").is_file());
         assert!(u.payload.join("WeirdUtils").is_dir());
+        for dxvk in ["DXVK_Standard", "DXVK_AMD"] {
+            let dll = std::fs::read(u.payload.join(dxvk).join("d3d9.dll")).expect("DXVK build bundled");
+            let pe = u32::from_le_bytes(dll[0x3c..0x40].try_into().unwrap()) as usize;
+            assert_eq!(&dll[pe + 4..pe + 6], &0x14cu16.to_le_bytes(), "{dxvk} is 32-bit, like WoW");
+        }
         assert!(u.icon.is_file());
         let again = super::unpack(&data).unwrap();
         assert_eq!(again.payload, u.payload);

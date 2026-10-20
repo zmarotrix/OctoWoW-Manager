@@ -1,7 +1,7 @@
 //! Apply Changes, Play, app update check and v2.6 settings import.
 
 use super::CmdResult;
-use crate::config::{GpuType, Settings};
+use crate::config::Settings;
 use crate::core::{app_update, apply, launch, migrate, platform, torrent::Torrent};
 use crate::jobs;
 use crate::state::AppState;
@@ -19,14 +19,8 @@ pub(crate) async fn run_apply(app: &AppHandle, settings: &Settings, step: &(dyn 
     let cache = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let bundled = crate::core::payload::unpack(&cache)?;
     let vulkan = vulkan_status(app).await;
-    // "Standard" DXVK is the client release's own d3d9.dll (piece-verified download, cached).
-    let client_dxvk = if settings.gpu_type == GpuType::Standard {
-        app.state::<AppState>().updater.client_file("d3d9.dll", &cache).await.ok()
-    } else {
-        None
-    };
     apply::apply(
-        apply::ApplyInput { wow_dir: &wow_dir, payload: &bundled.payload, cache: &cache, icon: Some(bundled.icon), settings, client_dxvk, vulkan },
+        apply::ApplyInput { wow_dir: &wow_dir, payload: &bundled.payload, cache: &cache, icon: Some(bundled.icon), settings, vulkan },
         &|_, _| {},
         step,
     )
