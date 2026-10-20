@@ -6,6 +6,10 @@ macOS**. It's the successor to the
 [OctoWoW Installation Manager](https://github.com/zmarotrix/OctoWoW-Installation-Manager) (v2.6),
 rebuilt from scratch in Rust + Tauri.
 
+<img width="1109" height="775" alt="image" src="https://github.com/user-attachments/assets/47aeac75-9496-4d62-aebf-d3f091a9c72b" />
+<img width="1112" height="774" alt="image" src="https://github.com/user-attachments/assets/4ec53676-fb46-482d-acf0-3458155e8553" />
+
+
 ## Download
 
 Grab the latest build from **[Releases](../../releases)**. Each one is a single standalone
