@@ -1,15 +1,16 @@
 # Builds OctoWoW Manager as standalone programs (no installers):
 #   Windows: single .exe · Linux: single .AppImage · macOS: universal .app (zipped)
 # Runs on every push to main and from the Actions tab ("Run workflow"); results are
-# attached to the run as artifacts. Pushing a tag like v3.0.0 also attaches them to
-# a draft GitHub release.
+# attached to the run as artifacts. Pushing a version tag (e.g. 3.0.1) also
+# publishes a GitHub release with the three builds, using docs/releases/<tag>.md
+# as the release notes.
 name: Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*", "[0-9]*"]
 
 defaults:
   run:
@@ -91,11 +92,26 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag, version and notes agree
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          V=$(node -p "require('./package.json').version")
+          [ "$TAG" = "$V" ] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $V"; exit 1; }
+          [ -f "docs/releases/$TAG.md" ] || { echo "::error::Missing release notes docs/releases/$TAG.md"; exit 1; }
+          echo "NOTES=docs/releases/$TAG.md" >> "$GITHUB_ENV"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
       - uses: actions/download-artifact@v4
         with:
           path: builds
           merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          name: OctoWoW Manager ${{ env.VERSION }}
+          body_path: ${{ env.NOTES }}
+          draft: false
+          make_latest: true
           files: builds/*
