@@ -27,3 +27,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## gitoxide
+
+The built-in git client (`src-tauri/src/core/git.rs`) uses [gitoxide](https://github.com/GitoxideLabs/gitoxide)
+(the `gix` crates), licensed under MIT or Apache-2.0.
+
+## GitAddonsManager
+
+Support for GitAddonsManager's addon layout (multi-addon repositories kept as `<Name>.repo`, with
+their addon subfolders moved into AddOns) follows the behaviour of
+[GitAddonsManager](https://gitlab.com/woblight/GitAddonsManager) (GPL-3.0). No code is copied.

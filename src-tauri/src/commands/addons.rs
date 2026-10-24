@@ -28,9 +28,10 @@ pub fn check_addon_updates(app: AppHandle, state: State<AppState>) -> CmdResult<
     let tracked = state.snapshot().tracked_addons;
     Ok(jobs::spawn(&app.clone(), "Checking addons for updates", move |ctx| async move {
         let list = blocking(move || addons::scan(&dir, &tracked, &HashMap::new()).map_err(|e| e.to_string())).await?;
-        let mut urls: Vec<String> = list.iter().filter_map(|a| a.url.clone()).collect();
-        urls.sort_by_key(|u| url_key(u));
-        urls.dedup_by_key(|u| url_key(u));
+        // Git checkouts are checked against the branch they're on.
+        let mut urls: Vec<(String, Option<String>)> = list.iter().filter_map(|a| a.url.clone().map(|u| (u, a.branch.clone()))).collect();
+        urls.sort_by_key(|(u, _)| url_key(u));
+        urls.dedup_by_key(|(u, _)| url_key(u));
         let total = urls.len() as u64;
         let mut results: HashMap<String, String> = HashMap::new();
         let mut failed = 0;
@@ -38,10 +39,13 @@ pub fn check_addon_updates(app: AppHandle, state: State<AppState>) -> CmdResult<
             let handles: Vec<_> = chunk
                 .iter()
                 .map(|u| {
-                    let u = u.clone();
+                    let (u, branch) = u.clone();
                     tauri::async_runtime::spawn(async move {
                         let r = match addons::parse_repo(&u) {
-                            Ok(repo) => addons::ls_remote(&repo).await.map(|(sha, _)| sha),
+                            Ok(mut repo) => {
+                                repo.branch = repo.branch.or(branch);
+                                addons::ls_remote(&repo).await.map(|(sha, _)| sha)
+                            }
                             Err(e) => Err(e),
                         };
                         (u, r)

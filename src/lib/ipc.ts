@@ -81,6 +81,7 @@ export type AddonEntry = {
 	managed: boolean;
 	missing: boolean;
 	isGit: boolean;
+	branch: string | null;
 };
 
 export type CatalogEntry = {

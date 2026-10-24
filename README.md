@@ -34,8 +34,11 @@ Coming from v2.6? Use **Game Settings → Import v2.6 settings** and pick your o
   ClassicAPI, VanillaHelpers and the WeirdUtils suite, with "Latest (GitHub)" sources, plus
   your own custom DLLs. `dlls.txt` is managed safely: unknown lines are always kept.
 - **Game Mods:** toggle, describe and remove custom `.mpq` patches without deleting them.
-- **Addon Manager:** install from any GitHub/GitLab/Gitea/Codeberg URL or `.zip`, browse the
-  curated OctoWoW catalog, and update everything with one click. No git install needed.
+- **Addon Manager:** install from any git URL (GitHub, GitLab, Gitea, Codeberg, OctoWoW git or
+  any other host) or a `.zip`, browse the curated OctoWoW catalog, and update everything with one
+  click. No git install needed: a built-in git client ([gitoxide](https://github.com/GitoxideLabs/gitoxide))
+  handles hosts without zip downloads, and addons installed as git checkouts (OctoLauncher,
+  GitAddonsManager, including its `<Name>.repo` multi-addon layout) are updated in place, keeping `.git`.
 - **Game Updates:** checks your client against the official release and lists exactly which
   files are missing, outdated or corrupt. It downloads only those, with every piece verified
   against the release checksums, and can resume.
@@ -130,7 +133,8 @@ src-tauri/src/
     updater.rs           client check / verify / update
     webseed.rs           verified parallel HTTPS downloader (replaces aria2)
     torrent.rs verify.rs
-    addons.rs            git-less addon install/update + catalog
+    addons.rs            addon install/update (zip archives or git) + catalog
+    git.rs               built-in git (gitoxide): shallow clone, in-place checkout updates
     mpq.rs plugins.rs launch.rs migrate.rs app_update.rs platform.rs util.rs
 ```
 

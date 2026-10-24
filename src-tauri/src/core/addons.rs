@@ -5,7 +5,13 @@
 //! Codeberg and OctoWoW's own git), then the host's zip archive of that commit
 //! is extracted and the folder(s) holding a `.toc` are swapped in atomically.
 //! Each installed folder gets v2.6-compatible `.octowow_meta` (`url`, `sha`).
+//!
+//! The built-in git client (`super::git`) covers the rest: hosts without zip
+//! archives get a shallow clone, and addons that are git checkouts (the
+//! OctoLauncher's, or GitAddonsManager's, including its `<Name>.repo` layout
+//! for repos holding several addons) are updated in place, keeping `.git`.
 
+use super::git;
 use super::util::{extract_zip, get_bytes, http, remove_dir_force, replace_dir, scratch_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -28,8 +34,11 @@ pub struct AddonEntry {
     pub managed: bool,
     /// Tracked by URL but the folder is gone.
     pub missing: bool,
-    /// Folder is a git checkout (e.g. installed by the OctoLauncher).
+    /// Folder is a git checkout (e.g. installed by the OctoLauncher), or comes
+    /// from one (GitAddonsManager's multi-addon repos).
     pub is_git: bool,
+    /// Branch a git checkout is on, so update checks follow it.
+    pub branch: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -72,6 +81,13 @@ impl Repo {
         format!("{web}.git")
     }
 
+    /// `git_url`, then the same without `.git`, which some hosts (sourcehut) require.
+    pub fn git_urls(&self) -> [String; 2] {
+        let url = self.git_url();
+        let bare = url.trim_end_matches(".git").to_string();
+        [url, bare]
+    }
+
     pub fn archive_url(&self, sha: &str) -> String {
         match self.host {
             Host::GitHub => format!("https://codeload.github.com/{}/{}/zip/{sha}", self.owner, self.name),
@@ -99,7 +115,16 @@ pub fn url_key(url: &str) -> String {
 /// `/tree/<branch>` (GitHub), `/-/tree/<branch>` (GitLab), `/src/branch/<branch>` (Gitea).
 pub fn parse_repo(url: &str) -> Result<Repo, String> {
     let url = url.trim();
-    let rest = url.strip_prefix("https://").ok_or("Use an https:// repository URL")?;
+    // Checkouts cloned over ssh (`git@host:owner/name`) are read over https.
+    let ssh = match url.strip_prefix("ssh://") {
+        Some(r) => Some(r.split_once('@').map_or(r, |(_, h)| h).to_string()),
+        None if !url.contains("://") => url.split_once('@').and_then(|(_, hp)| hp.split_once(':')).map(|(host, path)| format!("{host}/{path}")),
+        None => None,
+    };
+    let rest = match &ssh {
+        Some(r) => r.as_str(),
+        None => url.strip_prefix("https://").ok_or("Use an https:// repository URL")?,
+    };
     let (host, path) = rest.split_once('/').ok_or("That URL doesn't point to a repository")?;
     let host = host.to_ascii_lowercase();
     let mut parts: Vec<&str> = path.split(['?', '#']).next().unwrap_or("").split('/').filter(|p| !p.is_empty()).collect();
@@ -144,13 +169,21 @@ pub fn parse_repo(url: &str) -> Result<Repo, String> {
 /// Latest commit of the branch (or the default branch) via git smart-HTTP.
 /// Returns `(sha, branch)`.
 pub async fn ls_remote(repo: &Repo) -> Result<(String, String), String> {
-    let url = format!("{}/info/refs?service=git-upload-pack", repo.git_url());
-    let res = http()
-        .get(&url)
-        .header(reqwest::header::USER_AGENT, "git/2.45.0 (octowow-manager)")
-        .send()
-        .await
-        .map_err(|e| format!("Couldn't reach {}: {e}", repo.web))?;
+    let mut res = None;
+    for base in repo.git_urls() {
+        let r = http()
+            .get(format!("{base}/info/refs?service=git-upload-pack"))
+            .header(reqwest::header::USER_AGENT, "git/2.45.0 (octowow-manager)")
+            .send()
+            .await
+            .map_err(|e| format!("Couldn't reach {}: {e}", repo.web))?;
+        let missing = r.status() == reqwest::StatusCode::NOT_FOUND || r.status() == reqwest::StatusCode::UNAUTHORIZED;
+        res = Some(r);
+        if !missing {
+            break;
+        }
+    }
+    let res = res.unwrap();
     if res.status() == reqwest::StatusCode::NOT_FOUND || res.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err(format!("Repository not found (or private): {}", repo.web));
     }
@@ -283,11 +316,48 @@ fn install_found(addons_dir: &Path, extracted: &Path, meta: Option<&OctoMeta>, w
 }
 
 /// Installs (or updates) every addon in a repository. Returns `(folders, sha)`.
+///
+/// Git checkouts of the repo already in AddOns are updated in place. Otherwise
+/// the host's zip archive is used, falling back to a shallow git clone for
+/// hosts that don't serve archives.
 pub async fn install_from_url(addons_dir: &Path, url: &str) -> Result<(Vec<String>, String), String> {
     let repo = parse_repo(url)?;
-    let (sha, branch) = ls_remote(&repo).await?;
-    let bytes = get_bytes(&repo.archive_url(&sha)).await?;
     std::fs::create_dir_all(addons_dir).map_err(|e| e.to_string())?;
+    let dir = addons_dir.to_path_buf();
+    let key = url_key(url);
+    let checkouts = blocking(move || Ok(find_checkouts(&dir, &key))).await?;
+    if !checkouts.is_empty() {
+        let (dir, branch) = (addons_dir.to_path_buf(), repo.branch.clone());
+        return blocking(move || update_checkouts(&dir, &checkouts, branch.as_deref())).await;
+    }
+
+    let archive_err = match install_from_archive(addons_dir, url, &repo).await {
+        Ok(done) => return Ok(done),
+        Err(e) => e,
+    };
+    let (dir, url, repo2) = (addons_dir.to_path_buf(), url.trim().to_string(), repo.clone());
+    blocking(move || {
+        let tmp = scratch_dir(&dir, "git")?;
+        let result = (|| {
+            let src = tmp.join("src");
+            let [with_suffix, bare] = repo2.git_urls();
+            let sha = git::clone_shallow(&with_suffix, &src, repo2.branch.as_deref()).or_else(|e| {
+                let _ = remove_dir_force(&src);
+                git::clone_shallow(&bare, &src, repo2.branch.as_deref()).map_err(|_| e)
+            })?;
+            let meta = OctoMeta { url: Some(url.clone()), sha: Some(sha.clone()), branch: repo2.branch.clone() };
+            install_found(&dir, &src, Some(&meta), &repo2.web).map(|f| (f, sha))
+        })();
+        let _ = remove_dir_force(&tmp);
+        result
+    })
+    .await
+    .map_err(|git_err| if git_err.starts_with("No addon") { git_err } else { format!("{archive_err}\n(git clone also failed: {git_err})") })
+}
+
+async fn install_from_archive(addons_dir: &Path, url: &str, repo: &Repo) -> Result<(Vec<String>, String), String> {
+    let (sha, branch) = ls_remote(repo).await?;
+    let bytes = get_bytes(&repo.archive_url(&sha)).await?;
     let tmp = scratch_dir(addons_dir, "dl")?;
     let result = (|| {
         extract_zip(std::io::Cursor::new(bytes), &tmp)?;
@@ -296,6 +366,79 @@ pub async fn install_from_url(addons_dir: &Path, url: &str) -> Result<(Vec<Strin
     })();
     let _ = remove_dir_force(&tmp);
     result.map(|folders| (folders, sha))
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+// ---------- git checkouts ----------
+
+/// Whether `toc` (a `.toc` file stem) names the addon in `folder`, allowing
+/// other-flavour suffixes such as `-Classic` or `_Vanilla` like GitAddonsManager.
+fn toc_names_folder(folder: &str, toc: &str) -> bool {
+    let (f, t) = (folder.to_ascii_lowercase(), toc.to_ascii_lowercase());
+    t == f || FLAVOR_SUFFIXES.iter().any(|s| t == format!("{f}-{s}") || t == format!("{f}_{s}"))
+}
+
+/// Addon subfolders GitAddonsManager moves out of a checkout into AddOns.
+fn checkout_subfolders(dir: &Path) -> Vec<String> {
+    git::addon_subfolders(dir, toc_names_folder).into_iter().filter(|s| safe_folder(s)).collect()
+}
+
+/// A checkout that only holds other addons (e.g. GitAddonsManager's `Atlas.repo`)
+/// isn't an addon itself and stays out of the list.
+fn is_container(dir: &Path, subs: &[String]) -> bool {
+    !subs.is_empty() && pick_toc(dir).is_none_or(|t| !dir.file_name().is_some_and(|n| toc_names_folder(&n.to_string_lossy(), &t)))
+}
+
+fn git_dirs(addons_dir: &Path) -> Vec<PathBuf> {
+    subdirs(addons_dir).into_iter().filter(|d| d.join(".git").is_dir()).collect()
+}
+
+/// AddOns folders that are git checkouts of the repo with this `url_key`.
+fn find_checkouts(addons_dir: &Path, key: &str) -> Vec<String> {
+    git_dirs(addons_dir)
+        .into_iter()
+        .filter(|d| read_git_checkout(d).is_some_and(|(u, _)| url_key(&u) == key))
+        .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect()
+}
+
+/// Updates checkouts in place, then (like GitAddonsManager) moves the addon
+/// subfolders of multi-addon repos out into AddOns, replacing the old copies.
+fn update_checkouts(addons_dir: &Path, checkouts: &[String], branch: Option<&str>) -> Result<(Vec<String>, String), String> {
+    let mut folders = Vec::new();
+    let mut sha = String::new();
+    for name in checkouts {
+        let mut dir = addons_dir.join(name);
+        let old_subs = checkout_subfolders(&dir);
+        // A checkout named like one of its own subfolders must step aside first.
+        if old_subs.iter().any(|s| s.eq_ignore_ascii_case(name)) {
+            let to = addons_dir.join(format!("{name}.repo"));
+            std::fs::rename(&dir, &to).map_err(|e| format!("Couldn't rename {name} to {name}.repo: {e}"))?;
+            dir = to;
+        }
+        sha = git::update_checkout(&dir, branch)?;
+        let subs = checkout_subfolders(&dir);
+        for gone in old_subs.iter().filter(|s| !subs.contains(s)) {
+            let p = addons_dir.join(gone);
+            if p != dir && !p.join(".git").exists() {
+                let _ = remove_dir_force(&p);
+            }
+        }
+        for sub in &subs {
+            let src = dir.join(sub);
+            if src.is_dir() {
+                replace_dir(&src, &addons_dir.join(sub))?;
+            }
+            folders.push(sub.clone());
+        }
+        if !is_container(&dir, &subs) {
+            folders.push(dir.file_name().unwrap().to_string_lossy().into_owned());
+        }
+    }
+    Ok((folders, sha))
 }
 
 pub fn install_from_zip(addons_dir: &Path, zip: &Path) -> Result<Vec<String>, String> {
@@ -312,7 +455,15 @@ pub fn remove(addons_dir: &Path, folder: &str) -> Result<(), String> {
     if !safe_folder(folder) {
         return Err(format!("Invalid addon folder '{folder}'"));
     }
-    remove_dir_force(&addons_dir.join(folder)).map_err(|e| format!("Couldn't remove {folder} (is the game running?): {e}"))
+    remove_dir_force(&addons_dir.join(folder)).map_err(|e| format!("Couldn't remove {folder} (is the game running?): {e}"))?;
+    // Drop a multi-addon checkout once none of its addons are left.
+    for dir in git_dirs(addons_dir) {
+        let subs = checkout_subfolders(&dir);
+        if subs.iter().any(|s| s.eq_ignore_ascii_case(folder)) && is_container(&dir, &subs) && !subs.iter().any(|s| addons_dir.join(s).is_dir()) {
+            let _ = remove_dir_force(&dir);
+        }
+    }
+    Ok(())
 }
 
 // ---------- scanning ----------
@@ -402,6 +553,22 @@ pub fn scan(wow_dir: &Path, tracked: &[String], remote: &HashMap<String, String>
     let mut out = Vec::new();
     let mut found_keys = HashSet::new();
 
+    // Multi-addon checkouts (GitAddonsManager): their addon subfolders live
+    // beside them in AddOns and are managed through the checkout.
+    let mut hidden = HashSet::new();
+    let mut from_checkout: HashMap<String, (String, String, Option<String>)> = HashMap::new();
+    for dir in git_dirs(&addons_dir) {
+        let subs = checkout_subfolders(&dir);
+        let Some((url, sha)) = read_git_checkout(&dir).filter(|_| !subs.is_empty()) else { continue };
+        let branch = git::current_branch(&dir);
+        for s in &subs {
+            from_checkout.insert(s.to_ascii_lowercase(), (url.clone(), sha.clone(), branch.clone()));
+        }
+        if is_container(&dir, &subs) {
+            hidden.insert(dir.file_name().unwrap().to_string_lossy().into_owned());
+        }
+    }
+
     if addons_dir.is_dir() {
         for entry in std::fs::read_dir(&addons_dir)? {
             let entry = entry?;
@@ -409,13 +576,21 @@ pub fn scan(wow_dir: &Path, tracked: &[String], remote: &HashMap<String, String>
                 continue;
             }
             let folder = entry.file_name().to_string_lossy().into_owned();
-            if folder.starts_with("Blizzard_") || folder.starts_with("Turtle_") || folder.starts_with('.') {
+            if folder.starts_with("Blizzard_") || folder.starts_with("Turtle_") || folder.starts_with('.') || hidden.contains(&folder) {
                 continue;
             }
             let path = entry.path();
             let meta: OctoMeta = std::fs::read(path.join(".octowow_meta")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
-            let is_git = path.join(".git").is_dir();
-            let git = if is_git && meta.url.is_none() { read_git_checkout(&path) } else { None };
+            let own_git = path.join(".git").is_dir();
+            let git = if own_git && meta.url.is_none() {
+                read_git_checkout(&path).map(|(u, s)| (u, s, git::current_branch(&path)))
+            } else if meta.url.is_none() {
+                from_checkout.get(&folder.to_ascii_lowercase()).cloned()
+            } else {
+                None
+            };
+            let is_git = own_git || git.is_some();
+            let branch = meta.branch.clone().or_else(|| git.as_ref().and_then(|g| g.2.clone()));
             let url = meta
                 .url
                 .or_else(|| git.as_ref().map(|g| g.0.clone()))
@@ -438,6 +613,7 @@ pub fn scan(wow_dir: &Path, tracked: &[String], remote: &HashMap<String, String>
                 remote_sha,
                 missing: false,
                 is_git,
+                branch,
                 folder,
             });
         }
@@ -458,6 +634,7 @@ pub fn scan(wow_dir: &Path, tracked: &[String], remote: &HashMap<String, String>
             managed: true,
             missing: true,
             is_git: false,
+            branch: None,
         });
     }
 
@@ -559,6 +736,18 @@ mod tests {
         assert_eq!(o.git_url(), "https://git.octowow.st/git/Dusk/LevelRange-Octo.git");
         assert_eq!(o.archive_url("main"), "https://octowow.st/git/Dusk/LevelRange-Octo/archive/main.zip");
         assert_eq!(url_key("https://git.octowow.st/git/Dusk/LevelRange-Octo.git"), url_key("https://octowow.st/git/dusk/levelrange-octo/"));
+        // Checkouts cloned over ssh.
+        assert_eq!(url_key("git@github.com:shagu/pfUI.git"), url_key("https://github.com/shagu/pfUI"));
+        assert_eq!(url_key("ssh://git@github.com/shagu/pfUI.git"), url_key("https://github.com/shagu/pfUI"));
+        assert_eq!(parse_repo("https://git.sr.ht/~a/b").unwrap().git_urls(), ["https://git.sr.ht/~a/b.git", "https://git.sr.ht/~a/b"]);
+    }
+
+    #[test]
+    fn matches_flavoured_tocs_like_gitaddonsmanager() {
+        assert!(toc_names_folder("Atlas", "atlas"));
+        assert!(toc_names_folder("Atlas_Extra", "Atlas_Extra-Classic"));
+        assert!(toc_names_folder("Atlas", "Atlas_Vanilla"));
+        assert!(!toc_names_folder("Atlas", "AtlasLoot"));
     }
 
     #[test]
@@ -602,6 +791,103 @@ mod tests {
         remove_dir_force(&root).unwrap();
     }
 
+    /// A multi-addon repo laid out the way GitAddonsManager leaves it.
+    #[tokio::test]
+    #[ignore]
+    async fn live_gitaddonsmanager_layout() {
+        let root = std::env::temp_dir().join(format!("octo-addon-gam-{}", std::process::id()));
+        let _ = remove_dir_force(&root);
+        let addons = root.join("Interface/AddOns");
+        std::fs::create_dir_all(&addons).unwrap();
+        // Upstream: Atlas (Atlas.toc), Atlas_Extra (flavoured toc), docs; the
+        // newest commit adds Atlas_Maps and drops a file. Built with the git CLI.
+        let upstream = root.join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        let git_cli = |args: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false"]).args(args).current_dir(&upstream).status().unwrap().success());
+        let put = |p: &str, body: &str| {
+            let f = upstream.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, body).unwrap();
+        };
+        git_cli(&["init", "-q", "-b", "main"]);
+        put("Atlas/Atlas.toc", "## Title: Atlas
+");
+        put("Atlas/old.lua", "-- old
+");
+        put("Atlas_Extra/Atlas_Extra-Classic.toc", "## Title: Extra
+");
+        put("docs/readme.txt", "hi");
+        git_cli(&["add", "-A"]);
+        git_cli(&["commit", "-q", "-m", "one"]);
+        put("Atlas/core.lua", "-- v2
+");
+        git_cli(&["add", "-A"]);
+        git_cli(&["commit", "-q", "-m", "two"]);
+        put("Atlas_Maps/Atlas_Maps.toc", "## Title: Maps
+");
+        std::fs::remove_file(upstream.join("Atlas/old.lua")).unwrap();
+        git_cli(&["add", "-A"]);
+        git_cli(&["commit", "-q", "-m", "three"]);
+        let url = upstream.to_string_lossy().replace('\\', "/");
+        let name = "Atlas".to_string();
+        let repo = git::tests::full_clone(&url, &addons.join(&name));
+        let subs = checkout_subfolders(&addons.join(&name));
+        println!("{name}: {subs:?}");
+        assert_eq!(subs, ["Atlas", "Atlas_Extra", "Atlas_Maps"]);
+        git::tests::rewind(&repo, 2);
+        let subs = checkout_subfolders(&addons.join(&name));
+        assert_eq!(subs, ["Atlas", "Atlas_Extra"]);
+        drop(repo);
+        // GitAddonsManager: rename to .repo if a subfolder shares the name, then move the subfolders out.
+        let mut container = addons.join(&name);
+        if subs.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
+            let to = addons.join(format!("{name}.repo"));
+            std::fs::rename(&container, &to).unwrap();
+            container = to;
+        }
+        for s in &subs {
+            std::fs::rename(container.join(s), addons.join(s)).unwrap();
+        }
+        std::fs::write(addons.join(&subs[0]).join("local-edit.txt"), "").unwrap();
+
+        let list = scan(&root, &[], &HashMap::new()).unwrap();
+        let names: Vec<&str> = list.iter().map(|a| a.folder.as_str()).collect();
+        println!("scan: {names:?}");
+        assert!(!names.contains(&container.file_name().unwrap().to_str().unwrap()), "container is hidden");
+        for s in &subs {
+            let a = list.iter().find(|a| &a.folder == s).unwrap();
+            assert!(a.is_git && a.managed && a.local_sha.is_some() && a.branch.as_deref() == Some("main"));
+        }
+        let origin = read_git_checkout(&container).unwrap().0;
+        assert_eq!(find_checkouts(&addons, &url_key(&origin)), ["Atlas.repo"]);
+
+        let (folders, sha) = update_checkouts(&addons, &["Atlas.repo".to_string()], None).unwrap();
+        assert_eq!(folders, ["Atlas", "Atlas_Extra", "Atlas_Maps"]);
+        let subs = folders;
+        assert!(!addons.join("Atlas/old.lua").exists() && addons.join("Atlas/core.lua").exists());
+        let repo = gix::open(&container).unwrap();
+        assert_eq!(repo.head_id().unwrap().to_string(), sha);
+        for s in &subs {
+            assert!(addons.join(s).join(format!("{s}.toc")).exists() || pick_toc(&addons.join(s)).is_some());
+            assert!(!container.join(s).exists(), "{s} moved out again");
+        }
+        assert!(!addons.join(&subs[0]).join("local-edit.txt").exists(), "subfolders are replaced like GitAddonsManager does");
+        let list = scan(&root, &[], &HashMap::from([(url_key(&origin), sha.clone())])).unwrap();
+        assert!(list.iter().all(|a| !a.update_available));
+        // The checkout itself is clean apart from the moved-out addons (as with GitAddonsManager).
+        let st = std::process::Command::new("git").args(["status", "--porcelain"]).current_dir(&container).output().unwrap();
+        let st = String::from_utf8_lossy(&st.stdout).to_string();
+        println!("git status:
+{st}");
+        assert!(st.lines().all(|l| l.starts_with(" D ") && subs.iter().any(|s| l[3..].starts_with(s.as_str()))));
+
+        for s in &subs {
+            remove(&addons, s).unwrap();
+        }
+        assert!(!container.exists(), "checkout removed with its last addon");
+        remove_dir_force(&root).unwrap();
+    }
+
     #[tokio::test]
     #[ignore]
     async fn live_install_update_remove() {
@@ -613,8 +899,13 @@ mod tests {
             println!("{url} -> {folders:?} @ {sha}");
             assert!(!folders.is_empty());
         }
+        // sourcehut has no zip archives: the archive fails, the git clone works
+        // (and then finds no addon in this non-addon repo).
+        let e = install_from_url(&addons, "https://git.sr.ht/~sircmpwn/scdoc").await.unwrap_err();
+        assert!(e.starts_with("No addon"), "{e}");
         let list = scan(&root, &[], &HashMap::new()).unwrap();
         assert!(list.iter().all(|a| a.managed && a.local_sha.is_some()));
+        assert!(std::fs::read_dir(&addons).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().starts_with(".octowow-")), "scratch folders cleaned up");
         let cat = fetch_catalog().await.unwrap();
         println!("catalog: {} addons", cat.len());
         assert!(cat.len() > 50);

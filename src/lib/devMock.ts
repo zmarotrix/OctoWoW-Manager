@@ -36,7 +36,7 @@ let settings: Settings = {
 };
 
 const addon = (folder: string, title: string, version: string, author: string, notes: string, extra: Partial<AddonEntry> = {}): AddonEntry => ({
-	folder, title, version, author, notes, url: null, localSha: 'a1', remoteSha: null, updateAvailable: false, managed: false, missing: false, isGit: false, ...extra
+	folder, title, version, author, notes, url: null, localSha: 'a1', remoteSha: null, updateAvailable: false, managed: false, missing: false, isGit: false, branch: null, ...extra
 });
 
 const gh = (repo: string) => ({ url: `https://github.com/${repo}`, managed: true });

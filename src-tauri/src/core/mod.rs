@@ -2,6 +2,7 @@ pub mod addons;
 pub mod app_update;
 pub mod apply;
 pub mod client;
+pub mod git;
 pub mod launch;
 pub mod migrate;
 pub mod mpq;
