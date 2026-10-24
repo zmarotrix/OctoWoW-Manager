@@ -88,6 +88,8 @@ pub struct Settings {
     pub game_mods_meta: BTreeMap<String, GameModMeta>,
     /// Git URLs of addons installed through the manager.
     pub tracked_addons: Vec<String>,
+    /// Repo keys (normalised URLs) of addons whose updates the player chose to ignore.
+    pub ignored_addons: Vec<String>,
     pub github_token: String,
     /// Linux/macOS: how to run Windows executables (e.g. `wine`, a Proton
     /// wrapper, or a CrossOver/Bottles command). Empty = `wine`.
@@ -109,6 +111,7 @@ impl Default for Settings {
             custom_plugins: BTreeMap::new(),
             game_mods_meta: BTreeMap::new(),
             tracked_addons: Vec::new(),
+            ignored_addons: Vec::new(),
             github_token: String::new(),
             launch_command: String::new(),
             pending_apply: false,

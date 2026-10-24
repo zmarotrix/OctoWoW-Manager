@@ -29,6 +29,7 @@ let settings: Settings = {
 	customPlugins: { 'MyCustomHook.dll': true },
 	gameModsMeta: {},
 	trackedAddons: [],
+	ignoredAddons: [],
 	githubToken: '',
 	launchCommand: '',
 	pendingApply: false

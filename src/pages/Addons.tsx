@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { ArrowDownToLine, ArrowUpRight, FileArchive, FolderX, GitBranch, Loader2, Package, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpRight, Bell, BellOff, Check, FileArchive, FolderX, GitBranch, Loader2, Minus, Package, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-react';
 import { api, errorText, repoKey, type AddonEntry, type CatalogEntry } from '../lib/ipc';
 import { useSettings } from '../lib/settings';
 import { useJobs } from '../lib/jobs';
@@ -78,11 +78,55 @@ const useAddonActions = () => {
 		}
 	};
 
-	return { busy, install, remove, settings };
+	const ignored = useMemo(() => new Set(settings.ignoredAddons.map(repoKey)), [settings.ignoredAddons]);
+	const setIgnored = (url: string, on: boolean) =>
+		update(s => {
+			const key = repoKey(url);
+			const rest = s.ignoredAddons.filter(k => repoKey(k) !== key);
+			return { ...s, ignoredAddons: on ? [...rest, key] : rest };
+		});
+
+	return { busy, install, remove, settings, ignored, setIgnored };
 };
 
-const AddonCard = ({ a, busy, onUpdate, onRemove }: { a: AddonEntry; busy: boolean; onUpdate: () => void; onRemove: () => void }) => (
-	<div className={cn('lazy-row group flex items-center gap-3.5 rounded-xl border border-line bg-panel px-4 py-3 transition-colors hover:bg-panel-hover', a.missing && 'border-danger/30')}>
+/** Small square checkbox; `mixed` shows a dash (some selected). */
+const Tick = ({ checked, mixed, onChange, label }: { checked: boolean; mixed?: boolean; onChange: (v: boolean) => void; label: string }) => (
+	<button
+		type="button"
+		role="checkbox"
+		aria-checked={mixed ? 'mixed' : checked}
+		aria-label={label}
+		title={label}
+		onClick={() => onChange(!checked)}
+		className={cn(
+			'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors',
+			checked || mixed ? 'brand-gradient border-transparent text-white' : 'border-line-strong bg-black/30 hover:border-muted'
+		)}
+	>
+		{mixed ? <Minus size={12} strokeWidth={3} /> : checked && <Check size={12} strokeWidth={3} />}
+	</button>
+);
+
+type CardProps = {
+	a: AddonEntry;
+	busy: boolean;
+	onUpdate: () => void;
+	onRemove: () => void;
+	/** Include this addon in "Update Selected". */
+	selected?: { checked: boolean; onChange: (v: boolean) => void };
+	ignored?: boolean;
+	onIgnore?: (ignore: boolean) => void;
+};
+
+const AddonCard = ({ a, busy, onUpdate, onRemove, selected, ignored, onIgnore }: CardProps) => (
+	<div
+		className={cn(
+			'lazy-row group flex items-center gap-3.5 rounded-xl border border-line bg-panel px-4 py-3 transition-colors hover:bg-panel-hover',
+			a.missing && 'border-danger/30',
+			selected && !selected.checked && 'opacity-55'
+		)}
+	>
+		{selected && <Tick checked={selected.checked} onChange={selected.onChange} label={`Include ${a.title} in the update`} />}
 		<Avatar name={a.title} dim={a.missing} />
 		<div className="min-w-0 flex-1">
 			<div className="flex items-center gap-2">
@@ -95,13 +139,24 @@ const AddonCard = ({ a, busy, onUpdate, onRemove }: { a: AddonEntry; busy: boole
 					</Badge>
 				)}
 				{!a.managed && <Badge>Local</Badge>}
+				{ignored && <Badge tone={a.updateAvailable ? 'warning' : 'neutral'}>{a.updateAvailable ? 'Update ignored' : 'Updates ignored'}</Badge>}
 			</div>
 			<div className="truncate font-mono text-[11px] text-subtle">
 				{[a.version && `v${a.version}`, a.author, a.folder].filter(Boolean).join(' · ')}
 			</div>
 			{a.notes && <div className="mt-0.5 truncate text-xs text-muted">{a.notes}</div>}
 		</div>
-		{(a.updateAvailable || a.missing) && a.url && (
+		{onIgnore && a.url && !a.missing && (
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ignored ? Bell : BellOff}
+				title={ignored ? 'Resume updates for this addon' : 'Ignore updates for this addon'}
+				className={ignored ? '' : 'opacity-0 group-hover:opacity-100'}
+				onClick={() => onIgnore(!ignored)}
+			/>
+		)}
+		{(a.updateAvailable || a.missing) && a.url && !ignored && (
 			<Button variant="primary" size="sm" icon={busy ? Loader2 : ArrowDownToLine} onClick={onUpdate} disabled={busy} className={busy ? '[&_svg]:animate-spin' : ''}>
 				{a.missing ? 'Repair' : 'Update'}
 			</Button>
@@ -138,12 +193,31 @@ const InstalledView = ({ query, actions }: { query: string; actions: ReturnType<
 	}, [addons.data, settings.wowDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const match = (a: AddonEntry) => !query || a.title.toLowerCase().includes(query) || a.folder.toLowerCase().includes(query);
-	const updates = all.filter(a => (a.updateAvailable || a.missing) && a.url && match(a));
-	const installed = all.filter(a => !(a.updateAvailable || a.missing) || !a.url).filter(match);
+	const isIgnored = (a: AddonEntry) => !!a.url && actions.ignored.has(repoKey(a.url));
+	// Ignored addons never show as updates; missing files still need a repair.
+	const pending = (a: AddonEntry) => !!a.url && (a.missing || (a.updateAvailable && !isIgnored(a)));
+	const updates = all.filter(a => pending(a) && match(a));
+	const installed = all.filter(a => !pending(a) && match(a));
 
-	const updateAll = async () => {
-		const urls = [...new Map(updates.map(a => [repoKey(a.url!), a.url!])).values()];
+	// Addons unticked for this update (by repo); everything else is included.
+	const [skipped, setSkipped] = useState<Set<string>>(new Set());
+	const toggle = (url: string, include: boolean) =>
+		setSkipped(s => {
+			const n = new Set(s);
+			if (include) n.delete(repoKey(url));
+			else n.add(repoKey(url));
+			return n;
+		});
+	const chosen = updates.filter(a => !skipped.has(repoKey(a.url!)));
+	const allChosen = chosen.length === updates.length;
+
+	const updateSelected = async () => {
+		const urls = [...new Map(chosen.map(a => [repoKey(a.url!), a.url!])).values()];
 		for (const u of urls) await actions.install(u, 'Updated');
+	};
+	const onIgnore = (a: AddonEntry) => (ignore: boolean) => {
+		actions.setIgnored(a.url!, ignore);
+		toast.info(ignore ? `Ignoring updates for ${a.title}` : `Updates resumed for ${a.title}`);
 	};
 
 	if (!settings.wowDir)
@@ -190,14 +264,33 @@ const InstalledView = ({ query, actions }: { query: string; actions: ReturnType<
 						count={updates.length}
 						tone="text-amber-400"
 						action={
-							<Button size="sm" icon={ArrowDownToLine} onClick={updateAll} disabled={actions.busy.size > 0}>
-								Update All
-							</Button>
+							<div className="flex items-center gap-3">
+								<label className="flex items-center gap-2 text-xs text-muted">
+									<Tick
+										checked={allChosen}
+										mixed={!allChosen && chosen.length > 0}
+										onChange={() => setSkipped(allChosen ? new Set(updates.map(a => repoKey(a.url!))) : new Set())}
+										label={allChosen ? 'Untick all' : 'Tick all'}
+									/>
+									{allChosen ? 'All' : `${chosen.length} of ${updates.length}`}
+								</label>
+								<Button size="sm" icon={ArrowDownToLine} onClick={updateSelected} disabled={actions.busy.size > 0 || chosen.length === 0}>
+									{allChosen ? 'Update All' : `Update Selected (${chosen.length})`}
+								</Button>
+							</div>
 						}
 					/>
 					<div className="flex flex-col gap-2">
 						{updates.map(a => (
-							<AddonCard key={a.folder + a.missing} a={a} busy={actions.busy.has(repoKey(a.url!))} onUpdate={() => actions.install(a.url!, a.missing ? 'Repaired' : 'Updated')} onRemove={() => actions.remove(a, all)} />
+							<AddonCard
+								key={a.folder + a.missing}
+								a={a}
+								busy={actions.busy.has(repoKey(a.url!))}
+								onUpdate={() => actions.install(a.url!, a.missing ? 'Repaired' : 'Updated')}
+								onRemove={() => actions.remove(a, all)}
+								selected={{ checked: !skipped.has(repoKey(a.url!)), onChange: v => toggle(a.url!, v) }}
+								onIgnore={onIgnore(a)}
+							/>
 						))}
 					</div>
 				</>
@@ -209,7 +302,15 @@ const InstalledView = ({ query, actions }: { query: string; actions: ReturnType<
 			/>
 			<div className="flex flex-col gap-2">
 				{installed.map(a => (
-					<AddonCard key={a.folder} a={a} busy={false} onUpdate={() => undefined} onRemove={() => actions.remove(a, all)} />
+					<AddonCard
+						key={a.folder}
+						a={a}
+						busy={false}
+						onUpdate={() => undefined}
+						onRemove={() => actions.remove(a, all)}
+						ignored={isIgnored(a)}
+						onIgnore={a.managed ? onIgnore(a) : undefined}
+					/>
 				))}
 			</div>
 		</>

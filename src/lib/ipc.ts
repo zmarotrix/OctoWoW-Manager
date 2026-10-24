@@ -35,6 +35,7 @@ export type Settings = {
 	customPlugins: Record<string, boolean>;
 	gameModsMeta: Record<string, GameModMeta>;
 	trackedAddons: string[];
+	ignoredAddons: string[];
 	githubToken: string;
 	launchCommand: string;
 	pendingApply: boolean;
