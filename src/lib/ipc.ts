@@ -189,4 +189,6 @@ export const repoKey = (url: string) =>
 		.replace(/\/(tree|-\/tree|src\/branch)\/.*$/, '')
 		.replace(/\/+$/, '')
 		.replace(/\.git$/, '')
-		.toLowerCase();
+		.toLowerCase()
+		// Both OctoWoW git addresses name the same repos.
+		.replace(/^https:\/\/git\.octowow\.st\/git\//, 'https://octowow.st/git/');

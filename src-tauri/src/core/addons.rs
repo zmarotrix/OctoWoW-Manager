@@ -61,8 +61,15 @@ pub struct Repo {
 }
 
 impl Repo {
+    /// Where git requests go. OctoWoW's `octowow.st/git/` sits behind a bot
+    /// check that git clients can't pass; the same repos answer git requests on
+    /// `git.octowow.st/git/`.
     pub fn git_url(&self) -> String {
-        format!("{}.git", self.web)
+        let web = match self.web.strip_prefix(OCTOWOW_WEB) {
+            Some(rest) => format!("{OCTOWOW_GIT}{rest}"),
+            None => self.web.clone(),
+        };
+        format!("{web}.git")
     }
 
     pub fn archive_url(&self, sha: &str) -> String {
@@ -75,8 +82,17 @@ impl Repo {
 }
 
 /// Normalised key for comparing repo URLs typed in different ways.
+const OCTOWOW_WEB: &str = "https://octowow.st/git/";
+const OCTOWOW_GIT: &str = "https://git.octowow.st/git/";
+
+/// Normalised key for comparing repo URLs typed in different ways. Both OctoWoW
+/// git addresses name the same repos.
 pub fn url_key(url: &str) -> String {
-    parse_repo(url).map(|r| r.web.to_ascii_lowercase()).unwrap_or_else(|_| url.trim().trim_end_matches('/').trim_end_matches(".git").to_ascii_lowercase())
+    let key = parse_repo(url).map(|r| r.web.to_ascii_lowercase()).unwrap_or_else(|_| url.trim().trim_end_matches('/').trim_end_matches(".git").to_ascii_lowercase());
+    match key.strip_prefix(OCTOWOW_GIT) {
+        Some(rest) => format!("{OCTOWOW_WEB}{rest}"),
+        None => key,
+    }
 }
 
 /// Accepts repo URLs as copied from a browser or a clone button, including
@@ -538,6 +554,11 @@ mod tests {
         assert!(parse_repo("http://github.com/a/b").is_err());
         assert!(parse_repo("https://github.com/onlyowner").is_err());
         assert_eq!(url_key("https://github.com/Shagu/pfUI/"), url_key("https://github.com/shagu/pfui.git"));
+        // octowow.st/git is behind a bot check for git; git.octowow.st serves the same repos.
+        let o = parse_repo("https://octowow.st/git/Dusk/LevelRange-Octo").unwrap();
+        assert_eq!(o.git_url(), "https://git.octowow.st/git/Dusk/LevelRange-Octo.git");
+        assert_eq!(o.archive_url("main"), "https://octowow.st/git/Dusk/LevelRange-Octo/archive/main.zip");
+        assert_eq!(url_key("https://git.octowow.st/git/Dusk/LevelRange-Octo.git"), url_key("https://octowow.st/git/dusk/levelrange-octo/"));
     }
 
     #[test]
@@ -587,7 +608,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("octo-addon-live-{}", std::process::id()));
         let _ = remove_dir_force(&root);
         let addons = root.join("Interface/AddOns");
-        for url in ["https://github.com/shagu/ShaguTweaks", "https://git.octowow.st/git/shaga/NampowerSettings.git"] {
+        for url in ["https://github.com/shagu/ShaguTweaks", "https://git.octowow.st/git/shaga/NampowerSettings.git", "https://octowow.st/git/Dusk/LevelRange-Octo"] {
             let (folders, sha) = install_from_url(&addons, url).await.unwrap();
             println!("{url} -> {folders:?} @ {sha}");
             assert!(!folders.is_empty());
