@@ -56,6 +56,8 @@ pub fn catalog() -> Vec<PluginInfo> {
         },
         core("transmogfix.dll", "Eliminates FPS drops caused by rapid equipment visual updates."),
         PluginInfo {
+            // "Latest" comes from brues-code's maintained fork; "Recommended" is the bundled copy.
+            github: Some("brues-code/UnitXP_SP3"),
             companion_addon: Some("UnitXP_SP3_Addon"),
             ..core("UnitXP_SP3.dll", "Engine-level optimizations replacing legacy assembly.")
         },
@@ -141,5 +143,18 @@ pub fn remove_custom(wow_dir: &Path, file: &str) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("Couldn't delete {file} (is the game running?): {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// "Latest (GitHub)" for UnitXP comes from brues-code's fork and must be a 32-bit DLL.
+    #[tokio::test]
+    #[ignore]
+    async fn live_unitxp_latest() {
+        let (dll, tag) = super::download_latest("brues-code/UnitXP_SP3", "UnitXP_SP3.dll").await.unwrap();
+        let pe = u32::from_le_bytes(dll[0x3c..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&dll[pe + 4..pe + 6], &0x14cu16.to_le_bytes(), "32-bit, like WoW");
+        println!("UnitXP_SP3.dll {tag}: {} bytes", dll.len());
     }
 }

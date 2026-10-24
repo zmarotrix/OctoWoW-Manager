@@ -96,13 +96,15 @@ export const Button = ({
 		{...props}
 		className={cn(
 			'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-[background,filter,transform,color] duration-100 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40',
-			size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3 text-[13px]',
-			!children && (size === 'sm' ? 'w-7 px-0' : 'w-8 px-0'),
+			// Icon-only buttons are square with no side padding; never emit both
+			// px-* classes, since CSS order (not class order) would decide the winner.
+			size === 'sm' ? 'h-7 text-xs' : 'h-8 text-[13px]',
+			children ? (size === 'sm' ? 'px-2.5' : 'px-3') : size === 'sm' ? 'w-7' : 'w-8',
 			variants[variant],
 			className
 		)}
 	>
-		{Icon && <Icon size={size === 'sm' ? 13 : 15} strokeWidth={2} />}
+		{Icon && <Icon size={size === 'sm' ? 13 : 15} strokeWidth={2} className="shrink-0" />}
 		{children}
 	</button>
 );

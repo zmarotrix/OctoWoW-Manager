@@ -19,6 +19,7 @@ const CREDITS: [string, string | null, string | null][] = [
 	['VanillaHelpers', 'https://github.com/isfir/VanillaHelpers', null],
 	['PerfBoost', 'https://gitea.com/avitasia/perf_boost', 'https://gitea.com/avitasia/PerfBoostSettings'],
 	['UnitXP_SP3', 'https://codeberg.org/konaka/UnitXP_SP3', 'https://codeberg.org/konaka/UnitXP_SP3_Addon'],
+	['UnitXP_SP3 (brues-code fork)', 'https://github.com/brues-code/UnitXP_SP3', null],
 	['Nampower', 'https://gitea.com/avitasia/nampower', 'https://gitea.com/avitasia/NampowerSettings'],
 	['SuperWoW', 'https://github.com/balakethelock/SuperWoW', 'https://github.com/balakethelock/SuperAPI'],
 	['ClassicAPI', 'https://github.com/brues-code/ClassicAPI', null],

@@ -145,7 +145,7 @@ OctoWoW Manager packages and builds on the work of:
 [SuperWoW](https://github.com/balakethelock/SuperWoW) ·
 [ClassicAPI](https://github.com/brues-code/ClassicAPI) ·
 [VanillaHelpers](https://github.com/isfir/VanillaHelpers) ·
-[UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) ·
+[UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) (Latest builds from [brues-code's fork](https://github.com/brues-code/UnitXP_SP3)) ·
 [nampower](https://gitea.com/avitasia/nampower) ·
 [PerfBoost](https://gitea.com/avitasia/perf_boost) ·
 [WeirdUtils](https://codeberg.org/MarcelineVQ/WeirdUtils) ·

@@ -15,7 +15,7 @@ export const CATALOG: PluginInfo[] = [
 	core('perf_boost.dll', 'Provides dynamic render distance controls (culling).'),
 	core('SuperWoWhook.dll', 'Injects a massively expanded Lua API. Increases macro limit.', { github: 'balakethelock/SuperWoW' }),
 	core('transmogfix.dll', 'Eliminates FPS drops caused by rapid equipment visual updates.'),
-	core('UnitXP_SP3.dll', 'Engine-level optimizations replacing legacy assembly.'),
+	core('UnitXP_SP3.dll', 'Engine-level optimizations replacing legacy assembly.', { github: 'brues-code/UnitXP_SP3' }),
 	core('VanillaHelpers.dll', 'Expands engine limits. Raises the client memory allocator from 2GB to 4GB.', { github: 'isfir/VanillaHelpers' }),
 	core('weirdperformance.dll', 'Engine-level optimizations: SIMD math replacements, etc.'),
 	optional('bigcursor.dll', 'Upscales the hardware cursor for improved visibility on modern resolutions.'),

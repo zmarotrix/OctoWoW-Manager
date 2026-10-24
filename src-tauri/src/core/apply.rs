@@ -456,6 +456,21 @@ SomeoneElses.dll"), "custom + unmanaged lines kept");
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Writes a shortcut into a fixed temp folder for Windows itself to inspect afterwards.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn shortcut_for_inspection() {
+        let dir = std::env::temp_dir().join("octo-shortcut-check");
+        let _ = remove_dir_force(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("VanillaFixes.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join("WoW_Tweaked.exe"), b"MZ").unwrap();
+        let icon = crate::core::payload::unpack(&std::env::temp_dir().join("octo-shortcut-data")).unwrap().icon;
+        create_shortcut(&dir, Some(&icon)).unwrap();
+        println!("{}", dir.join("Play Modernized WoW.lnk").display());
+    }
+
     #[test]
     fn limits() {
         let mut s = Settings::default();
