@@ -73,7 +73,7 @@ pub async fn apply(input: ApplyInput<'_>, log: Log<'_>, step: &(dyn Fn(u64, &str
     }
     check_limits(s)?;
     if super::platform::is_game_running() {
-        return Err("Close WoW before applying changes.".into());
+        return Err("Close all WoW windows before applying changes; the game locks the files Apply rewrites.".into());
     }
     let catalog = plugins::catalog();
     let addons = addons_dir(wow_dir);

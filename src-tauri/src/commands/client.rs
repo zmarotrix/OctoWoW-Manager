@@ -88,7 +88,7 @@ fn publish_plan(ctx: &jobs::JobCtx, plan: updater::Plan) {
 async fn run_client_op(ctx: Arc<jobs::JobCtx>, wow_dir: PathBuf, op: ClientOp) -> CmdResult<String> {
     let app = ctx.app().clone();
     if op == ClientOp::Update && platform::is_game_running() {
-        return Err("Close WoW before updating the client.".into());
+        return Err("Close all WoW windows before updating the client; the game locks its files while running.".into());
     }
     let (plan, release, bytes) = plan_for(&ctx, &wow_dir, op == ClientOp::Verify).await?;
     let up = &app.state::<AppState>().updater;

@@ -1,5 +1,6 @@
 //! Starting the game: `VanillaFixes.exe WoW_Tweaked.exe` (as v2.6 did) directly
-//! on Windows, or through a Wine-compatible runner elsewhere.
+//! on Windows, or through a Wine-compatible runner elsewhere. Every Play starts
+//! another client, so several can run side by side (multiboxing).
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -10,9 +11,6 @@ pub const DEFAULT_RUNNER: &str = "wine";
 pub fn launch(wow_dir: &Path, runner: &str) -> Result<(), String> {
     if !wow_dir.join("WoW.exe").is_file() {
         return Err("WoW.exe wasn't found in your game folder.".into());
-    }
-    if super::platform::is_game_running() {
-        return Err("WoW is already running.".into());
     }
     let game = if wow_dir.join("WoW_Tweaked.exe").is_file() { "WoW_Tweaked.exe" } else { "WoW.exe" };
     let (program, args): (&str, Vec<&str>) = if wow_dir.join("VanillaFixes.exe").is_file() { ("VanillaFixes.exe", vec![game]) } else { (game, vec![]) };
