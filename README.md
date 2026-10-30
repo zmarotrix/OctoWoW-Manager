@@ -24,6 +24,24 @@ program with everything (plugin DLLs, companion addons, patcher) built in. There
 Coming from v2.6? Use **Game Settings → Import v2.6 settings** and pick your old
 `octowow_config.json`.
 
+### Linux and macOS: the Wine command
+
+Play runs `<Wine command> VanillaFixes.exe WoW_Tweaked.exe` in your game folder, so VanillaFixes
+loads the DLLs in `dlls.txt` and starts the tweaked client. Nothing needs renaming. The
+**Wine command** box (Game Settings → Installation) takes:
+
+| Example | What it does |
+|---|---|
+| *(empty)* or `wine` | the Wine on your `PATH` |
+| `WINEPREFIX=~/Games/wow wine` | `VAR=value` words at the start set environment variables |
+| `"/opt/wine builds/bin/wine"` | quotes keep paths with spaces together |
+| `WINEPREFIX=~/Games/umu/wow ~/.local/share/Steam/compatibilitytools.d/GE-Proton11-11` | a **Proton folder**: run through `umu-run` when it's installed, otherwise with `proton run` |
+| `~/.local/share/lutris/runners/wine/wine-ge-8-26-x86_64` | a **Wine folder** (one with `bin/wine`) |
+| `/path/to/my-wrapper.sh` | any script; it gets `VanillaFixes.exe WoW_Tweaked.exe` as its arguments |
+
+The AppImage's own library and Python paths are removed before the game starts, so Wine and
+Proton see your normal environment.
+
 ## Features
 
 - **Game Settings:** aspect-ratio-correct FoV, render distance, ground clutter, nameplate

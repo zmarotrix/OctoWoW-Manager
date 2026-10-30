@@ -148,7 +148,11 @@ const InstallPanel = () => {
 							Wine command
 						</span>
 					}
-					description="How to run the Windows client: e.g. wine, a Proton wrapper, or a CrossOver/Bottles command. Leave empty for wine."
+					description={
+						<>
+							Runs <code className="font-mono">VanillaFixes.exe WoW_Tweaked.exe</code>. Use wine, a Wine or Proton folder, or a script. Add <code className="font-mono">VAR=value</code> first to set variables (e.g. <code className="font-mono">WINEPREFIX=~/Games/wow</code>), and put quotes around paths with spaces. Leave empty for wine.
+						</>
+					}
 				>
 					<Input className="w-64 font-mono" value={settings.launchCommand} onChange={e => update(s => ({ ...s, launchCommand: e.target.value }))} placeholder="wine" />
 				</Row>
